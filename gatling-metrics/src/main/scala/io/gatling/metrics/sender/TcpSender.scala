@@ -17,11 +17,11 @@ package io.gatling.metrics.sender
 
 import java.net.InetSocketAddress
 
-import io.gatling.metrics.message.SendMetric
-
 import scala.concurrent.duration._
 
 import akka.io.{ IO, Tcp }
+
+import io.gatling.metrics.message.SendMetric
 
 private[metrics] class TcpSender(remote: InetSocketAddress) extends MetricsSender with TcpSenderStateMachine {
 
@@ -31,7 +31,7 @@ private[metrics] class TcpSender(remote: InetSocketAddress) extends MetricsSende
   askForConnection()
 
   // Wait for answer from IO manager
-  startWith(WaitingForConnection, DisconnectedData(Failures(5, 5.seconds)))
+  startWith(WaitingForConnection, DisconnectedData(new Failures(5, 5.seconds)))
 
   when(WaitingForConnection) {
     // Connection succeeded: proceed to running state

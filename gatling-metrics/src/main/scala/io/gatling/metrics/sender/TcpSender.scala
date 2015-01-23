@@ -17,34 +17,65 @@ package io.gatling.metrics.sender
 
 import java.net.InetSocketAddress
 
+import scala.concurrent.duration._
+
 import akka.actor.ActorRef
 import akka.io.{ IO, Tcp }
 import akka.util.ByteString
 
-private[metrics] class TcpSender(remote: InetSocketAddress) extends MetricsSender {
+private[metrics] class TcpSender(remote: InetSocketAddress) extends MetricsSender with TcpSenderStateMachine {
 
   import Tcp._
 
-  IO(Tcp) ! Connect(remote)
+  // Initial ask for a connection to Akka IO
+  askForConnection()
 
-  def receive = uninitialized
+  // Wait for answer from Akka IO
+  startWith(WaitingForConnection, Failures(5, 5.seconds))
 
-  val commandFailed: Receive = {
-    case CommandFailed(cmd) => throw new RuntimeException(s"Command $cmd failed")
+  when(WaitingForConnection) {
+    // Connection succeeded: proceed to running state
+    case Event(_: Connected, failures) =>
+      ???
+
+    // Connection failed: either stop if all retries are exhausted or retry connection
+    case Event(CommandFailed(_: Connect), failures) =>
+      val newFailures = failures.newFailure
+      if(newFailures.isLimitReached)
+        goto(RetriesExhausted) using failures
+      else ???
   }
 
-  private def uninitialized: Receive = {
-    case CommandFailed(_: Connect) =>
-      logger.error(s"Graphite was unable to connect to $remote")
-      context stop self
-    case _: Connected =>
-      unstashAll()
-      val connection = sender()
-      connection ! Register(self)
-      context become connected(connection).orElse(commandFailed)
-    case _ => stash()
+  when(RetriesExhausted) {
+    case Event(_, _) =>
+      logger.info("All connection/sending have been exhausted, ignore further messages")
+      stay()
   }
 
-  override def sendByteString(connection: ActorRef, byteString: ByteString): Unit =
-    connection ! Write(byteString)
+  initialize()
+
+
+  def askForConnection(): Unit =
+    IO(Tcp) ! Connect(remote)
+
+//  def receive = uninitialized
+
+//  val commandFailed: Receive = {
+//    case CommandFailed(cmd) => throw new RuntimeException(s"Command $cmd failed")
+//  }
+//
+//  private def uninitialized: Receive = {
+//    case CommandFailed(_: Connect) =>
+//      logger.error(s"Graphite was unable to connect to $remote")
+//      context stop self
+//    case _: Connected =>
+//      unstashAll()
+//      val connection = sender()
+//      connection ! Register(self)
+//      context become connected(connection).orElse(commandFailed)
+//    case _ => stash()
+//  }
+//
+//  override def sendByteString(connection: ActorRef, byteString: ByteString): Unit =
+//    connection ! Write(byteString)
 }

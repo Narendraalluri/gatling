@@ -36,12 +36,4 @@ private[metrics] object MetricsSender {
   }
 }
 
-private[metrics] abstract class MetricsSender extends BaseActor with Stash {
-
-  def connected(connection: ActorRef): Receive = {
-    case m: SendMetric[_] =>
-      sendByteString(connection, m.byteString)
-  }
-
-  def sendByteString(connection: ActorRef, byteString: ByteString): Unit
-}
+private[metrics] abstract class MetricsSender extends BaseActor with Stash

@@ -20,6 +20,7 @@ import java.net.InetSocketAddress
 import akka.actor.ActorRef
 import akka.io.{ IO, Udp }
 import akka.util.ByteString
+import io.gatling.metrics.message.SendMetric
 
 private[metrics] class UdpSender(remote: InetSocketAddress) extends MetricsSender {
 
@@ -36,6 +37,7 @@ private[metrics] class UdpSender(remote: InetSocketAddress) extends MetricsSende
     case _ => stash()
   }
 
-  override def sendByteString(connection: ActorRef, byteString: ByteString): Unit =
-    connection ! Send(byteString, remote)
+  private def connected(connection: ActorRef): Receive = {
+    case m: SendMetric[_] => connection ! Send(m.byteString, remote)
+  }
 }

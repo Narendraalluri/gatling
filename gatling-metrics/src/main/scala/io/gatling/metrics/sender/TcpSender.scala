@@ -17,65 +17,81 @@ package io.gatling.metrics.sender
 
 import java.net.InetSocketAddress
 
+import io.gatling.metrics.message.SendMetric
+
 import scala.concurrent.duration._
 
-import akka.actor.ActorRef
 import akka.io.{ IO, Tcp }
-import akka.util.ByteString
 
 private[metrics] class TcpSender(remote: InetSocketAddress) extends MetricsSender with TcpSenderStateMachine {
 
   import Tcp._
 
-  // Initial ask for a connection to Akka IO
+  // Initial ask for a connection to IO manager
   askForConnection()
 
-  // Wait for answer from Akka IO
-  startWith(WaitingForConnection, Failures(5, 5.seconds))
+  // Wait for answer from IO manager
+  startWith(WaitingForConnection, DisconnectedData(Failures(5, 5.seconds)))
 
   when(WaitingForConnection) {
     // Connection succeeded: proceed to running state
-    case Event(_: Connected, failures) =>
-      ???
+    case Event(_: Connected, DisconnectedData(failures)) =>
+      unstashAll()
+      val connection = sender()
+      connection ! Register(self)
+      goto(Running) using ConnectedData(connection, failures)
 
     // Connection failed: either stop if all retries are exhausted or retry connection
-    case Event(CommandFailed(_: Connect), failures) =>
+    case Event(CommandFailed(_: Connect), DisconnectedData(failures)) =>
+      logger.info(s"Failed to connect to Graphite server located at: $remote")
       val newFailures = failures.newFailure
-      if(newFailures.isLimitReached)
-        goto(RetriesExhausted) using failures
-      else ???
+
+      stopIfLimitReachedOrContinueWith(newFailures) {
+        scheduler.scheduleOnce(1.second)(askForConnection())
+        stay() using DisconnectedData(newFailures)
+      }
+
+    case _ =>
+      stash()
+      stay()
+  }
+
+  when(Running) {
+    // GraphiteDataWriter sent a metric, write to socket
+    case Event(m: SendMetric[_], ConnectedData(connection, _)) =>
+      connection ! Write(m.byteString)
+      stay()
+
+    // Connection actor failed to send metric, log it as a failure
+    case Event(CommandFailed(_: Write), data: ConnectedData) =>
+      val newFailures = data.failures.newFailure
+
+      stopIfLimitReachedOrContinueWith(newFailures) {
+        stay() using data.copy(failures = newFailures)
+      }
+
+    // Server quits unexpectedly, retry connection
+    case Event(PeerClosed, data: ConnectedData) =>
+      val newFailures = data.failures.newFailure
+
+      stopIfLimitReachedOrContinueWith(newFailures) {
+        scheduler.scheduleOnce(1.second)(askForConnection())
+        goto(WaitingForConnection) using DisconnectedData(newFailures)
+      }
   }
 
   when(RetriesExhausted) {
-    case Event(_, _) =>
-      logger.info("All connection/sending have been exhausted, ignore further messages")
+    case _ =>
+      logger.debug("All connection/sending have been exhausted, ignore further messages")
       stay()
   }
 
   initialize()
 
-
   def askForConnection(): Unit =
     IO(Tcp) ! Connect(remote)
 
-//  def receive = uninitialized
-
-//  val commandFailed: Receive = {
-//    case CommandFailed(cmd) => throw new RuntimeException(s"Command $cmd failed")
-//  }
-//
-//  private def uninitialized: Receive = {
-//    case CommandFailed(_: Connect) =>
-//      logger.error(s"Graphite was unable to connect to $remote")
-//      context stop self
-//    case _: Connected =>
-//      unstashAll()
-//      val connection = sender()
-//      connection ! Register(self)
-//      context become connected(connection).orElse(commandFailed)
-//    case _ => stash()
-//  }
-//
-//  override def sendByteString(connection: ActorRef, byteString: ByteString): Unit =
-//    connection ! Write(byteString)
+  def stopIfLimitReachedOrContinueWith(failures: Failures)(continueState: this.State) =
+    if (failures.isLimitReached) goto(RetriesExhausted) using NoData
+    else continueState
 }

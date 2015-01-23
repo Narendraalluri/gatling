@@ -15,17 +15,23 @@
  */
 package io.gatling.metrics.sender
 
-import akka.actor.FSM
+import akka.actor.{ ActorRef, FSM }
 
 import io.gatling.core.util.TimeHelper.nowMillis
 
 import scala.concurrent.duration.FiniteDuration
 
-private[sender] trait TcpSenderStateMachine extends FSM[TcpSenderState, Failures]
+private[sender] trait TcpSenderStateMachine extends FSM[TcpSenderState, TcpSenderData]
 
 private[sender] sealed trait TcpSenderState
 private[sender] case object WaitingForConnection extends TcpSenderState
+private[sender] case object Running extends TcpSenderState
 private[sender] case object RetriesExhausted extends TcpSenderState
+
+private[sender] sealed trait TcpSenderData
+private[sender] case object NoData extends TcpSenderData
+private[sender] case class DisconnectedData(failures: Failures) extends TcpSenderData
+private[sender] case class ConnectedData(connection: ActorRef, failures: Failures) extends TcpSenderData
 
 private[sender] case class Failures(maxFailuresLimit: Int, failureWindow: FiniteDuration, failures: List[Long] = Nil) {
 
